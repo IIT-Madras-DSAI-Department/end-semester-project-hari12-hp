@@ -201,10 +201,14 @@ class LogisticRegression:
     def predict(self, X):
         return (self.predict_proba(X) >= 0.5).astype(int)
 
-# --- NEW SVM CLASS ---
+
+
 class LinearSVM:
     """
-    Binary linear SVM classifier (hinge loss, SGD).
+    Binary linear SVM classifier (hinge loss).
+    
+    This version uses a FAST vectorized (batch) gradient calculation
+    instead of slow stochastic (SGD) loops.
     """
     def __init__(self, learning_rate=0.01, lambda_=0.01, n_iterations=1000, random_state=42):
         self.learning_rate = learning_rate
@@ -223,26 +227,31 @@ class LinearSVM:
         self.weights = np.random.randn(n_features) * 0.01
         self.bias = 0.0
         
+        # --- FAST Vectorized Gradient Descent ---
         for i in range(self.n_iterations):
-            # --- Added print statement for progress ---
             if self.n_iterations >= 4 and (i+1) % (self.n_iterations // 4) == 0:
                 print(f"      -> SVM: Iteration {i+1}/{self.n_iterations}")
+
+            # 1. Compute decision score for ALL samples at once
+            scores = np.dot(X, self.weights) + self.bias
             
-            # This is a non-vectorized version, let's optimize
-            for idx, x_i in enumerate(X):
-                condition = y_bin[idx] * (np.dot(x_i, self.weights) + self.bias)
-                
-                if condition < 1:
-                    # Misclassified or on margin
-                    dw = self.lambda_ * self.weights - (y_bin[idx] * x_i)
-                    db = -y_bin[idx]
-                else:
-                    # Correctly classified
-                    dw = self.lambda_ * self.weights
-                    db = 0
-                
-                self.weights -= self.learning_rate * dw / n_samples
-                self.bias -= self.learning_rate * db / n_samples
+            # 2. Find samples that are "violators" (misclassified or on margin)
+            violators_mask = (y_bin * scores) < 1
+            
+            # 3. Calculate gradients ONLY on the violators
+            # This is the "hinge loss" gradient
+            dw_hinge = -np.dot(X[violators_mask].T, y_bin[violators_mask])
+            db_hinge = -np.sum(y_bin[violators_mask])
+            
+            # 4. Add regularization gradient (applies to all weights)
+            # and average over all samples
+            dw = (self.lambda_ * self.weights) + (dw_hinge / n_samples)
+            db = db_hinge / n_samples
+            
+            # 5. Update parameters
+            self.weights -= self.learning_rate * dw
+            self.bias -= self.learning_rate * db
+        # --- End of fast fit method ---
 
     def decision_function(self, X):
         return np.dot(X, self.weights) + self.bias
@@ -256,11 +265,13 @@ class LinearSVM:
         # Sigmoid for probability 
         probas = 1 / (1 + np.exp(-np.clip(scores, -250, 250))) # Added clip
         return probas
-# --- END NEW SVM CLASS ---
 
 class KNearestNeighbors:
     """
     K-Nearest Neighbors (KNN) Classifier.
+    
+    This version is OPTIMIZED. It uses np.argpartition to find the
+    k-nearest neighbors in O(N) time instead of O(N log N).
     """
     def __init__(self, k=3):
         self.k = k
@@ -274,39 +285,35 @@ class KNearestNeighbors:
         self.X_train = X
         self.y_train = y
 
-    def _euclidean_distance(self, a, b):
-        return np.sqrt(np.sum((a - b)**2))
-
-    def _predict_one(self, x):
-        distances = [self._euclidean_distance(x, x_train) for x_train in self.X_train]
-        
-        k_nearest_indices = np.argsort(distances)[:self.k]
-        k_nearest_labels = [self.y_train[i] for i in k_nearest_indices]
-        
-        most_common = Counter(k_nearest_labels).most_common(1)
-        return most_common[0][0]
-
     def predict_proba(self, X):
         """
-        Predicts class probabilities for X.
+        Predicts class probabilities for X. (FAST, CORRECTED VERSION)
         Returns a (n_samples, n_classes) array.
         """
         n_samples = X.shape[0]
         all_probas = np.zeros((n_samples, self.n_classes))
         
-        print(f"    -> KNN: Calculating distances for {n_samples} samples (this is the slow part)...")
+        print(f"    -> KNN: Calculating distances for {n_samples} samples (Optimized)...")
         
         for i, x in enumerate(X): # Loop through each test sample
             if n_samples >= 4 and (i+1) % (n_samples // 4) == 0:
                 print(f"      -> KNN: Processing sample {i+1}/{n_samples}...")
 
-            distances = [self._euclidean_distance(x, x_train) for x_train in self.X_train]
+            # 1. Calculate distances from x to ALL training points in one go
+            distances = np.sqrt(np.sum((self.X_train - x)**2, axis=1))
             
-            k_nearest_indices = np.argsort(distances)[:self.k]
-            k_nearest_labels = [self.y_train[j] for j in k_nearest_indices]
+            # 2. --- THE CRITICAL OPTIMIZATION FIX 
+            k_smallest_indices = np.argpartition(distances, self.k)[:self.k]
+            # --- END FIX ---
             
+            # 3. Get the labels of those neighbors
+            # We use the INDICES from argpartition to get the labels
+            k_nearest_labels = [self.y_train[j] for j in k_smallest_indices]
+            
+            # 4. Count votes for each class
             class_counts = Counter(k_nearest_labels)
             
+            # 5. Populate the probability row
             for c in range(self.n_classes):
                 all_probas[i, c] = class_counts.get(c, 0) / self.k
         
