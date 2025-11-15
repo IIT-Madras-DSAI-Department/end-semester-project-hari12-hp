@@ -236,6 +236,7 @@ class KNearestNeighbors:
         self.k = k
         self.X_train = None
         self.y_train = None
+        self.n_classes = 10 # Hardcoded for MNIST (0-9)
 
     def fit(self, X, y):
         # KNN is a "lazy" learner, so fit just stores the data
@@ -245,12 +246,7 @@ class KNearestNeighbors:
     def _euclidean_distance(self, a, b):
         return np.sqrt(np.sum((a - b)**2))
 
-    def predict(self, X):
-        predictions = [self._predict_one(x) for x in X]
-        return np.array(predictions)
-
     def _predict_one(self, x):
-        # 1. Calculate distances from x to all points in X_train
         distances = [self._euclidean_distance(x, x_train) for x_train in self.X_train]
         
         # 2. Get the indices of the k-nearest neighbors
@@ -263,6 +259,41 @@ class KNearestNeighbors:
         most_common = Counter(k_nearest_labels).most_common(1)
         return most_common[0][0]
 
+    def predict_proba(self, X):
+        """
+        Predicts class probabilities for X.
+        Returns a (n_samples, n_classes) array.
+        """
+        n_samples = X.shape[0]
+        all_probas = np.zeros((n_samples, self.n_classes))
+        
+        for i, x in enumerate(X): # Loop through each test sample
+            # 1. Calculate distances
+            distances = [self._euclidean_distance(x, x_train) for x_train in self.X_train]
+            
+            # 2. Get the k-nearest labels
+            k_nearest_indices = np.argsort(distances)[:self.k]
+            k_nearest_labels = [self.y_train[j] for j in k_nearest_indices]
+            
+            # 3. Count votes for each class
+            class_counts = Counter(k_nearest_labels)
+            
+            # 4. Populate the probability row
+            for c in range(self.n_classes):
+                all_probas[i, c] = class_counts.get(c, 0) / self.k
+        
+        return all_probas
+
+    # --- UPDATED PREDICT METHOD ---
+    def predict(self, X):
+        """
+        Predicts the final class label (the one with highest probability).
+        """
+        # Get the (n_samples, 10) probability matrix
+        probas = self.predict_proba(X)
+        
+        # Return the index (which is the class) with the highest probability
+        return np.argmax(probas, axis=1)
 
 class DecisionTree:
     """
@@ -387,11 +418,8 @@ class DecisionTree:
             return self._traverse_tree(x, node.right)
 
 # 5. ENSEMBLE MODELS
-
 class RandomForest:
-    """
-    Random Forest Classifier using Bagging.
-    """
+    """ Random Forest Classifier using Bagging. """
     def __init__(self, n_trees=100, max_depth=10, min_samples_split=2, n_features=None, random_state=42):
         self.n_trees = n_trees
         self.max_depth = max_depth
@@ -399,12 +427,10 @@ class RandomForest:
         self.n_features = n_features
         self.random_state = random_state
         self.trees = []
-        if self.random_state:
-            np.random.seed(self.random_state)
+        if self.random_state: np.random.seed(self.random_state)
             
     def _bootstrap_sample(self, X, y):
         n_samples = X.shape[0]
-        # Sample with replacement
         idxs = np.random.choice(n_samples, n_samples, replace=True)
         return X[idxs], y[idxs]
         
@@ -413,59 +439,45 @@ class RandomForest:
 
     def fit(self, X, y):
         self.trees = []
+        n_feats = X.shape[1]
         
-        # Set n_features to sqrt(total features) if not specified
-        if self.n_features is None:
-            self.n_features = int(np.sqrt(X.shape[1]))
+        # 1. Resolve n_features string/None to an integer value
+        if self.n_features is None or self.n_features == 'sqrt':
+            n_feature_sampling = int(np.sqrt(n_feats))
+        elif isinstance(self.n_features, int):
+            n_feature_sampling = min(n_feats, self.n_features)
+        else:
+            raise ValueError(f"n_features must be an integer, 'sqrt', or None, got {self.n_features}.")
             
         for _ in range(self.n_trees):
-            # Create a tree
             tree = DecisionTree(
                 max_depth=self.max_depth,
                 min_samples_split=self.min_samples_split,
-                n_features=self.n_features
+                n_features=n_feature_sampling
             )
             
-            # Get a bootstrapped sample
             X_sample, y_sample = self._bootstrap_sample(X, y)
-            
-            # Fit the tree
             tree.fit(X_sample, y_sample)
             self.trees.append(tree)
 
     def predict(self, X):
-        # Get predictions from all trees
-        # Shape: (n_trees, n_samples)
-        tree_preds = [tree.predict(X) for tree in self.trees]
-        
-        # Transpose to (n_samples, n_trees)
-        tree_preds = np.array(tree_preds).T
-        
-        # Get the majority vote for each sample
-        # (self._most_common_label is faster than scipy.stats.mode)
+        tree_preds = np.array([tree.predict(X) for tree in self.trees]).T
         y_pred = [self._most_common_label(preds) for preds in tree_preds]
         return np.array(y_pred)
         
     def predict_proba(self, X):
-        """
-        Predicts class probabilities for X.
-        Returns a (n_samples, n_classes) array.
-        """
-        # This is a bit more complex, we need to know the classes
-        # Let's assume classes are 0-9
+        """ Returns the average probability count across all trees. """
         n_samples = X.shape[0]
-        n_classes = 10 # Hardcoded for MNIST only
+        n_classes = 10 
         all_probas = np.zeros((n_samples, n_classes))
         
-        # Get predictions from all trees
         tree_preds = np.array([tree.predict(X) for tree in self.trees]).T
         
-        # For each sample, count the votes for each class
         for i in range(n_samples):
             votes = tree_preds[i]
             class_counts = Counter(votes)
-            for c, count in class_counts.items():
-                all_probas[i, c] = count / self.n_trees
+            for c in range(n_classes):
+                 all_probas[i, c] = class_counts.get(c, 0) / self.n_trees
                 
         return all_probas
 
