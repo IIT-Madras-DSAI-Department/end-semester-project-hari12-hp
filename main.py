@@ -7,14 +7,13 @@ import os
 # Import all necessary models and utilities
 try:
     from algorithms import (
-        StandardScaler, 
+        StandardScaler, PCA, KNearestNeighbors,  # <-- Re-added PCA and KNN
         LogisticRegression, OneVsRestClassifier, 
-        LinearSVM, # Using SVM
         RandomForest, OneVsRestXGBoost, 
         calculate_f1_score
     )
 except ImportError:
-    print("Error: 'algorithms.py' not found.")
+    print("Error: 'algorithms.py' not found or is missing a model (like optimized KNN).")
     sys.exit(1)
 
 
@@ -43,58 +42,67 @@ def read_data(trainfile, validationfile):
 
 if __name__ == "__main__":
     
-    print("--- Running Final Stacking Ensemble (RF + XGB + SVM) ---")
+    print("--- Running Final Stacking Ensemble (RF + XGB + LogReg + KNN) ---")
     
     # 1. Load Data
     print("Loading data")
     Xtrain, ytrain, Xval, yval = read_data('MNIST_train.csv', 'MNIST_validation.csv')
 
     # 2. Preprocessing
+    # Path 1: Scaled Data (for RF, XGB, LogReg)
     print("Scaling data...")
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(Xtrain)
     X_val_scaled = scaler.transform(Xval)
     print("Scaling complete.")
 
+    # Path 2: PCA Data (for KNN model ONLY)
+    N_COMPONENTS = 100  # <-- CHANGED TO 100
+    print(f"Running PCA to {N_COMPONENTS} components (for KNN)...")
+    pca = PCA(n_components=N_COMPONENTS)
+    X_train_pca = pca.fit_transform(X_train_scaled) # Use scaled data for PCA
+    X_val_pca = pca.transform(X_val_scaled)
+    print("PCA complete.")
+
+
     # 3. Initialize Base Models (Level 0)
     
-    # Model 1: Random Forest (OPTIMIZED FOR SPEED)
+    # Model 1: Random Forest
     rf_model = RandomForest(
-        n_trees=25,       # Reduced from 50
-        max_depth=10,     # Reduced from 12
+        n_trees=25, 
+        max_depth=10,     
         n_features='sqrt', 
         random_state=42
     )
     
-    # Model 2: XGBoost (OPTIMIZED FOR SPEED)
+    # Model 2: XGBoost
     xgb_params = {
-        'n_estimators': 20, 
-        'learning_rate': 0.3, 
-        'max_depth': 3, 
-        'subsample': 0.8, 
-        'colsample_bytree': 0.2, 
-        'random_state': 42, 
-        'n_bins': 32
+        'n_estimators': 20, 'learning_rate': 0.3, 'max_depth': 3, 
+        'subsample': 0.8, 'colsample_bytree': 0.2, 
+        'random_state': 42, 'n_bins': 32
     }
     xgb_model = OneVsRestXGBoost(base_xgb_params=xgb_params)
 
-    # Model 3: Linear SVM (OPTIMIZED FOR SPEED)
-    svm_base = LinearSVM(
-        learning_rate=0.01, 
-        lambda_=0.01, 
-        n_iterations=300, # Reduced iterations
+    # Model 3: Logistic Regression
+    log_reg_base = LogisticRegression(
+        learning_rate=0.1, 
+        n_iterations=150,
         random_state=42
     )
-    svm_model = OneVsRestClassifier(base_classifier=svm_base)
+    log_reg_model = OneVsRestClassifier(base_classifier=log_reg_base)
 
-    # Level 1 (Meta-Model) - Logistic Regression
-    meta_lr_base = LogisticRegression(learning_rate=0.1, n_iterations=300)
+    # Model 4: K-Nearest Neighbors (using PCA data)
+    knn_model = KNearestNeighbors(k=5) # k=5 is a good hyperparameter
+
+    # Level 1 (Meta-Model)
+    meta_lr_base = LogisticRegression(learning_rate=0.1, n_iterations=150)
     meta_model = OneVsRestClassifier(base_classifier=meta_lr_base)
 
     base_models = {
         'RandomForest': (rf_model, X_train_scaled, X_val_scaled),
         'XGBoost (OvR)': (xgb_model, X_train_scaled, X_val_scaled),
-        'LinearSVM (OvR)': (svm_model, X_train_scaled, X_val_scaled)
+        'LogReg (OvR)': (log_reg_model, X_train_scaled, X_val_scaled),
+        'KNN (PCA-100)': (knn_model, X_train_pca, X_val_pca) # <-- ADDED
     }
 
     # 4. Stacking: Train Level 0 and Generate Meta-Features
@@ -115,7 +123,7 @@ if __name__ == "__main__":
         meta_features_train_list.append(train_preds_proba)
         meta_features_val_list.append(val_preds_proba)
 
-    # Concatenate all meta-features
+    # Concatenate all meta-features (10002, 40)
     X_train_meta = np.hstack(meta_features_train_list)
     X_val_meta = np.hstack(meta_features_val_list)
 
