@@ -7,7 +7,7 @@ import os
 # Import all necessary models and utilities
 try:
     from algorithms import (
-        StandardScaler, PCA, KNearestNeighbors,  # <-- Re-added PCA and KNN
+        StandardScaler, PCA, KNearestNeighbors, 
         LogisticRegression, OneVsRestClassifier, 
         RandomForest, OneVsRestXGBoost, 
         calculate_f1_score
@@ -42,7 +42,7 @@ def read_data(trainfile, validationfile):
 
 if __name__ == "__main__":
     
-    print("--- Running Final Stacking Ensemble (RF + XGB + LogReg + KNN) ---")
+    print("--- Running Final Stacking Ensemble (RF + XGB + LogReg + KNN) [TIME OPTIMIZED] ---")
     
     # 1. Load Data
     print("Loading data")
@@ -57,7 +57,7 @@ if __name__ == "__main__":
     print("Scaling complete.")
 
     # Path 2: PCA Data (for KNN model ONLY)
-    N_COMPONENTS = 100  # <-- CHANGED TO 100
+    N_COMPONENTS = 50  # <-- REDUCED FROM 100 TO SPEED UP KNN
     print(f"Running PCA to {N_COMPONENTS} components (for KNN)...")
     pca = PCA(n_components=N_COMPONENTS)
     X_train_pca = pca.fit_transform(X_train_scaled) # Use scaled data for PCA
@@ -69,7 +69,7 @@ if __name__ == "__main__":
     
     # Model 1: Random Forest
     rf_model = RandomForest(
-        n_trees=25, 
+        n_trees=15,       # <-- REDUCED FROM 25 TO SPEED UP RF
         max_depth=10,     
         n_features='sqrt', 
         random_state=42
@@ -91,8 +91,8 @@ if __name__ == "__main__":
     )
     log_reg_model = OneVsRestClassifier(base_classifier=log_reg_base)
 
-    # Model 4: K-Nearest Neighbors (using PCA data)
-    knn_model = KNearestNeighbors(k=5) # k=5 is a good hyperparameter
+    # Model 4: K-Nearest Neighbors (using k=3 is slightly faster)
+    knn_model = KNearestNeighbors(k=3) # <-- k=3 is faster than k=5
 
     # Level 1 (Meta-Model)
     meta_lr_base = LogisticRegression(learning_rate=0.1, n_iterations=150)
@@ -102,7 +102,7 @@ if __name__ == "__main__":
         'RandomForest': (rf_model, X_train_scaled, X_val_scaled),
         'XGBoost (OvR)': (xgb_model, X_train_scaled, X_val_scaled),
         'LogReg (OvR)': (log_reg_model, X_train_scaled, X_val_scaled),
-        'KNN (PCA-100)': (knn_model, X_train_pca, X_val_pca) # <-- ADDED
+        'KNN (PCA-50)': (knn_model, X_train_pca, X_val_pca) 
     }
 
     # 4. Stacking: Train Level 0 and Generate Meta-Features
