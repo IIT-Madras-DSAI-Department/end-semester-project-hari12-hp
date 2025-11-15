@@ -1,3 +1,4 @@
+[![Review Assignment Due Date](https://classroom.github.com/assets/deadline-readme-button-22041afd0340ce965d47ae6ef1cefeee28c7c493a6346c4f15d667ab976d596c.svg)](https://classroom.github.com/a/R05VM8Rg)
 # IIT-Madras-DA2401-Machine-Learning-Lab-End-Semester-Project
 
 ## 📌 Purpose of this Template
@@ -17,7 +18,7 @@ This repository is the **starter** for your End Semester Project submission in G
 
 ## 📁 Repository Structure
 
-* Describe your repository structure here. Explain about overall code organization.
+the algorithms.py is file whcih has all model architecutres and main is there execution
 
 ---
 
@@ -31,9 +32,7 @@ This repository is the **starter** for your End Semester Project submission in G
 
 All experiments should be runnable from the command line **and** reproducible in the notebook.
 
-### A. Command-line (recommended for grading)
-
-* Mention the instructions to run you .py files.
+ensure algorithms.py and main.py are in same directory and run
   
 ---
 
@@ -43,7 +42,7 @@ All experiments should be runnable from the command line **and** reproducible in
 
 ## 🧾 Authors
 
-**<Name, Roll No.>**, IIT Madras (2025–26)
+**<hariprasad, Roll No.da24b005>**, IIT Madras (2025–26)
 
 
 ## Best Practices:
