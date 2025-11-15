@@ -3,11 +3,11 @@ import pandas as pd
 import time
 import sys
 
-# Import models from algorithms.py
+# Import our models from algorithms.py
 try:
     from algorithms import (
         StandardScaler,
-        OneVsRestXGBoost,
+        RandomForest,
         calculate_f1_score
     )
 except ImportError:
@@ -41,7 +41,7 @@ def read_data(trainfile, validationfile):
 
 if __name__ == "__main__":
     
-    print("Running XGBoost (One-vs-Rest)")
+    print("Running Random Forest Classifier (Bagging)")
     
     # Load Data
     print("Loading data")
@@ -51,31 +51,28 @@ if __name__ == "__main__":
     print(f"Validation data: {Xval.shape}")
     
     # Preprocess Data
-    # Scaling is still a good practice even for tree-based models
+    # Scaling is less critical for tree-based models, but good practice
     print("Scaling data...")
     scaler = StandardScaler()
     Xtrain_scaled = scaler.fit_transform(Xtrain)
     Xval_scaled = scaler.transform(Xval)
 
     # Initialize Model Parameters
-    xgb_params = {
-        'n_estimators': 40,
-        'learning_rate': 0.3,
-        'max_depth': 3,
-        'subsample': 0.8,
-        'colsample_bytree': 0.2,
-        'random_state': 42,
-        'n_bins': 32
+    # Tune these parameters for the report!
+    rf_params = {
+        'n_trees': 50,              # Number of trees
+        'max_depth': 12,            # Tree depth
+        'n_features': 'sqrt',       # Max features to consider at each split
+        'random_state': 42
     }
     
-    # Initialize the OvR wrapper
-    model = OneVsRestXGBoost(base_xgb_params=xgb_params)
+    # Initialize the Random Forest model
+    model = RandomForest(**rf_params)
 
     # Train Model
-    print("Training model (this will take longer due to 10 boosted ensembles)")
+    print("Training model (this will take time to build 50 trees)")
     start_time = time.time()
     
-    # The OvR wrapper will train 10 separate binary XGBoost models
     model.fit(Xtrain_scaled, ytrain)
     
     training_time = time.time() - start_time
