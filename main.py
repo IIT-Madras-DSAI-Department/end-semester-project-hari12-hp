@@ -9,7 +9,7 @@ try:
     from algorithms import (
         StandardScaler, PCA, KNearestNeighbors, 
         LogisticRegression, OneVsRestClassifier, 
-        LinearSVM,  # <-- We need this for feature selection
+        LinearSVM,  # We still need SVM for the feature selector
         RandomForest, OneVsRestXGBoost, 
         calculate_f1_score
     )
@@ -43,7 +43,7 @@ def read_data(trainfile, validationfile):
 
 if __name__ == "__main__":
     
-    print("--- Running FINAL STACK (Model-Based FS + PCA) ---")
+    print("--- Running FINAL STACK (Tuned for Max Performance) ---")
     
     # --- 1. Load and Scale Data (Full 784 Features) ---
     print("Loading data...")
@@ -56,7 +56,7 @@ if __name__ == "__main__":
     print("Scaling complete.")
 
     # --- 2. Feature Path A: PCA (for KNN) ---
-    N_COMPONENTS_PCA = 50
+    N_COMPONENTS_PCA = 75  # <-- INCREASED from 50
     print(f"Running PCA to {N_COMPONENTS_PCA} components (for KNN)...")
     pca = PCA(n_components=N_COMPONENTS_PCA)
     X_train_pca = pca.fit_transform(X_train_scaled)
@@ -64,28 +64,20 @@ if __name__ == "__main__":
     print("PCA complete.")
 
     # --- 3. Feature Path B: Model-Based Selection (for RF, XGB, LogReg) ---
-    N_TOP_FEATURES = 150 # You can tune this
+    N_TOP_FEATURES = 150 # 150 is a good balance
     print(f"Running SVM Feature Selector to find top {N_TOP_FEATURES} features...")
     
-    # Train a fast, vectorized SVM to find feature importances
     svm_selector_base = LinearSVM(learning_rate=0.01, lambda_=0.01, n_iterations=100, random_state=42)
     svm_selector = OneVsRestClassifier(base_classifier=svm_selector_base)
     svm_selector.fit(X_train_scaled, ytrain)
     
-    # Aggregate weights
     all_weights = []
     for c in svm_selector.classes_:
         all_weights.append(svm_selector.models[c].weights)
-    
     all_weights_matrix = np.array(all_weights)
-    
-    # Find overall importance (max absolute weight for each pixel)
     feature_importance = np.max(np.abs(all_weights_matrix), axis=0)
-    
-    # Get the indices of the top N features
     top_feature_indices = np.argsort(feature_importance)[-N_TOP_FEATURES:]
     
-    # Create new, smaller datasets by slicing
     X_train_selected = X_train_scaled[:, top_feature_indices]
     X_val_selected = X_val_scaled[:, top_feature_indices]
     print(f"Feature selection complete. New data shape: {X_train_selected.shape}")
@@ -93,24 +85,24 @@ if __name__ == "__main__":
     # --- 4. Initialize Base Models (Level 0) ---
     print("\nInitializing Level 0 Base Models...")
     
-    # Model 1: Random Forest (on selected 150 features)
+    # Model 1: Random Forest (Slightly stronger)
     rf_model = RandomForest(
-        n_trees=25, # Can afford more trees on fewer features
+        n_trees=30,       # <-- INCREASED from 25
         max_depth=10,     
         n_features='sqrt', 
         random_state=42
     )
     
-    # Model 2: XGBoost (on selected 150 features)
+    # Model 2: XGBoost (Significantly stronger)
     xgb_params = {
-        'n_estimators': 25, # Can afford more estimators
+        'n_estimators': 75, # <-- INCREASED from 25
         'learning_rate': 0.3, 'max_depth': 3, 
-        'subsample': 0.8, 'colsample_bytree': 0.3, # Can use more features now
+        'subsample': 0.8, 'colsample_bytree': 0.3,
         'random_state': 42, 'n_bins': 32
     }
     xgb_model = OneVsRestXGBoost(base_xgb_params=xgb_params)
 
-    # Model 3: Logistic Regression (on selected 150 features)
+    # Model 3: Logistic Regression (Fast)
     log_reg_base = LogisticRegression(
         learning_rate=0.1, 
         n_iterations=150,
@@ -118,19 +110,18 @@ if __name__ == "__main__":
     )
     log_reg_model = OneVsRestClassifier(base_classifier=log_reg_base)
 
-    # Model 4: K-Nearest Neighbors (on 50 PCA features)
-    knn_model = KNearestNeighbors(k=3)
+    # Model 4: K-Nearest Neighbors (More robust k)
+    knn_model = KNearestNeighbors(k=5) # <-- k=5 is more robust than k=3
 
     # Level 1 (Meta-Model)
     meta_lr_base = LogisticRegression(learning_rate=0.1, n_iterations=150)
     meta_model = OneVsRestClassifier(base_classifier=meta_lr_base)
 
-    # Pair each model with its *specific* optimized data
     base_models = {
         'RandomForest (Top 150)': (rf_model, X_train_selected, X_val_selected),
         'XGBoost (Top 150)': (xgb_model, X_train_selected, X_val_selected),
         'LogReg (Top 150)': (log_reg_model, X_train_selected, X_val_selected),
-        'KNN (PCA-50)': (knn_model, X_train_pca, X_val_pca) 
+        'KNN (PCA-75)': (knn_model, X_train_pca, X_val_pca) 
     }
 
     # --- 5. Training Level 0 Models ---
