@@ -8,16 +8,17 @@
 # 2. Utility Functions & Classes
 #    - calculate_f1_score
 #    - StandardScaler
-#    - PCA (Principal Component Analysis) for preprocessing of dataset
+#    - PCA (Principal Component Analysis)
 # 3. Wrapper Classes
 #    - OneVsRestClassifier (Generic)
 # 4. Core Classification Models
 #    - LogisticRegression (Binary)
+#    - LinearSVM (Binary) <--- ADDED
 #    - KNearestNeighbors (Multiclass)
 #    - DecisionTree (Multiclass, base for RF)
 # 5. Ensemble Models
 #    - RandomForest (Bagging, Multiclass)
-#    - XGBoost (Boosting, Binary - from user)
+#    - XGBoost (Boosting, Binary)
 #    - OneVsRestXGBoost (Wrapper for XGBoost)
 
 import numpy as np
@@ -32,7 +33,6 @@ import copy # For the generic OneVsRestClassifier
 np.seterr(over='ignore', invalid='ignore')
 
 # 2. UTILITY FUNCTIONS & CLASSES
-
 
 def calculate_f1_score(y_true, y_pred, average='macro'):
     """
@@ -66,7 +66,7 @@ def calculate_f1_score(y_true, y_pred, average='macro'):
 
 class StandardScaler:
     """
-    Scales data to have a mean of 0 and a standard deviation of 1, this is important since pca is sensitive to scale.
+    Scales data to have a mean of 0 and a standard deviation of 1.
     """
     def __init__(self):
         self.mean_ = None
@@ -75,7 +75,6 @@ class StandardScaler:
     def fit(self, X):
         self.mean_ = np.mean(X, axis=0)
         self.std_ = np.std(X, axis=0)
-        # Add epsilon to avoid division by zero
         self.std_[self.std_ == 0] = 1e-15 
 
     def transform(self, X):
@@ -96,30 +95,21 @@ class PCA:
         self.mean_ = None
 
     def fit(self, X):
-        # 1. Center the data
         self.mean_ = np.mean(X, axis=0)
         X_centered = X - self.mean_
         
-        # 2. Compute covariance matrix
         cov_matrix = np.cov(X_centered.T)
-        
-        # 3. Compute eigenvectors and eigenvalues
         eigenvalues, eigenvectors = np.linalg.eig(cov_matrix)
         
-        # 4. Sort eigenvectors by eigenvalues in descending order
-        eigenvectors = eigenvectors.T # Transpose for easier indexing
+        eigenvectors = eigenvectors.T 
         idxs = np.argsort(eigenvalues)[::-1]
         eigenvalues = eigenvalues[idxs]
         eigenvectors = eigenvectors[idxs]
         
-        # 5. Store the first n_components
         self.components_ = eigenvectors[:self.n_components]
 
     def transform(self, X):
-        # Center the data
         X_centered = X - self.mean_
-        
-        # Project data onto the principal components
         return np.dot(X_centered, self.components_.T)
 
     def fit_transform(self, X):
@@ -129,30 +119,26 @@ class PCA:
 # 3. WRAPPER CLASSES
 class OneVsRestClassifier:
     """
-    A generic One-vs-Rest (OvR) wrapper for any binary classifier
-    that has .fit(), .predict_proba(), and .predict() methods.
+    A generic One-vs-Rest (OvR) wrapper for any binary classifier.
     """
     def __init__(self, base_classifier):
-        """
-        base_classifier: An *instance* of a binary classifier.
-                         e.g., LogisticRegression(learning_rate=0.1)
-        """
         self.base_classifier = base_classifier
         self.models = {}
         self.classes_ = None
 
     def fit(self, X, y):
         self.classes_ = np.unique(y)
-        for c in self.classes_:
-            # Creates a binary target vector
+        print(f"    -> OvR: Training {len(self.classes_)} binary models...")
+        for i, c in enumerate(self.classes_):
+            print(f"      -> OvR: Training model for class {c} ({i+1}/{len(self.classes_)})...")
             y_binary = (y == c).astype(int)
             
-            # Creates a deep copy of the classifier instance
             model = copy.deepcopy(self.base_classifier)
             
-            # Fit the model on the binary data
             model.fit(X, y_binary)
             self.models[c] = model
+        print(f"    -> OvR: Training complete.")
+
 
     def predict_proba(self, X):
         n_samples = X.shape[0]
@@ -161,20 +147,14 @@ class OneVsRestClassifier:
         
         for i, c in enumerate(self.classes_):
             model = self.models[c]
-            # Get the probability of the positive class
             probas = model.predict_proba(X)
             all_probas[:, i] = probas
             
         return all_probas
 
     def predict(self, X):
-        # Get the (n_samples, 10) probability matrix
         all_probas = self.predict_proba(X)
-        
-        # Find the index of the highest probability
         best_class_indices = np.argmax(all_probas, axis=1)
-        
-        # Map indices back to the actual class labels
         return self.classes_[best_class_indices]
 
 # 4. CORE CLASSIFICATION MODELS
@@ -187,36 +167,30 @@ class LogisticRegression:
         self.n_iterations = n_iterations
         self.weights = None
         self.bias = None
-        # We add random_state for reproducible weight initialization
         self.random_state = random_state
         if self.random_state:
             np.random.seed(self.random_state)
 
     def _sigmoid(self, z):
-        z = np.clip(z, -250, 250) # Avoids overflow
+        z = np.clip(z, -250, 250) 
         return 1 / (1 + np.exp(-z))
 
     def fit(self, X, y):
         n_samples, n_features = X.shape
         
-        # Initialize parameters
-        # Small random values instead of zeros can help
         self.weights = np.random.randn(n_features) * 0.01
         self.bias = 0.0
         
-        # Gradient Descent
-        for _ in range(self.n_iterations):
-            # Linear model: z = X.w + b
+        for i in range(self.n_iterations):
+            if self.n_iterations >= 4 and (i+1) % (self.n_iterations // 4) == 0:
+                print(f"      -> LogReg: Iteration {i+1}/{self.n_iterations}")
+
             z = np.dot(X, self.weights) + self.bias
-            
-            # Predictions (probabilities)
             y_pred = self._sigmoid(z)
             
-            # Calculate gradients
             dw = (1 / n_samples) * np.dot(X.T, (y_pred - y))
             db = (1 / n_samples) * np.sum(y_pred - y)
             
-            # Update parameters
             self.weights -= self.learning_rate * dw
             self.bias -= self.learning_rate * db
 
@@ -227,6 +201,62 @@ class LogisticRegression:
     def predict(self, X):
         return (self.predict_proba(X) >= 0.5).astype(int)
 
+# --- NEW SVM CLASS ---
+class LinearSVM:
+    """
+    Binary linear SVM classifier (hinge loss, SGD).
+    """
+    def __init__(self, learning_rate=0.01, lambda_=0.01, n_iterations=1000, random_state=42):
+        self.learning_rate = learning_rate
+        self.lambda_ = lambda_  # Regularization strength
+        self.n_iterations = n_iterations
+        self.weights = None
+        self.bias = 0.0
+        self.random_state = random_state
+        if self.random_state:
+            np.random.seed(self.random_state)
+    
+    def fit(self, X, y):
+        # SVM uses labels -1 and 1
+        y_bin = np.where(y == 1, 1, -1)
+        n_samples, n_features = X.shape
+        self.weights = np.random.randn(n_features) * 0.01
+        self.bias = 0.0
+        
+        for i in range(self.n_iterations):
+            # --- Added print statement for progress ---
+            if self.n_iterations >= 4 and (i+1) % (self.n_iterations // 4) == 0:
+                print(f"      -> SVM: Iteration {i+1}/{self.n_iterations}")
+            
+            # This is a non-vectorized version, let's optimize
+            for idx, x_i in enumerate(X):
+                condition = y_bin[idx] * (np.dot(x_i, self.weights) + self.bias)
+                
+                if condition < 1:
+                    # Misclassified or on margin
+                    dw = self.lambda_ * self.weights - (y_bin[idx] * x_i)
+                    db = -y_bin[idx]
+                else:
+                    # Correctly classified
+                    dw = self.lambda_ * self.weights
+                    db = 0
+                
+                self.weights -= self.learning_rate * dw / n_samples
+                self.bias -= self.learning_rate * db / n_samples
+
+    def decision_function(self, X):
+        return np.dot(X, self.weights) + self.bias
+    
+    def predict(self, X):
+        return (self.decision_function(X) >= 0).astype(int)
+    
+    def predict_proba(self, X):
+        # Use decision_function, pass through sigmoid for pseudo-probabilities
+        scores = self.decision_function(X)
+        # Sigmoid for probability 
+        probas = 1 / (1 + np.exp(-np.clip(scores, -250, 250))) # Added clip
+        return probas
+# --- END NEW SVM CLASS ---
 
 class KNearestNeighbors:
     """
@@ -240,6 +270,7 @@ class KNearestNeighbors:
 
     def fit(self, X, y):
         # KNN is a "lazy" learner, so fit just stores the data
+        print(f"    -> KNN: 'Fitting' model (storing {X.shape[0]} training points).")
         self.X_train = X
         self.y_train = y
 
@@ -249,13 +280,9 @@ class KNearestNeighbors:
     def _predict_one(self, x):
         distances = [self._euclidean_distance(x, x_train) for x_train in self.X_train]
         
-        # 2. Get the indices of the k-nearest neighbors
         k_nearest_indices = np.argsort(distances)[:self.k]
-        
-        # 3. Get the labels of those neighbors
         k_nearest_labels = [self.y_train[i] for i in k_nearest_indices]
         
-        # 4. Return the most common class label (majority vote)
         most_common = Counter(k_nearest_labels).most_common(1)
         return most_common[0][0]
 
@@ -267,46 +294,43 @@ class KNearestNeighbors:
         n_samples = X.shape[0]
         all_probas = np.zeros((n_samples, self.n_classes))
         
+        print(f"    -> KNN: Calculating distances for {n_samples} samples (this is the slow part)...")
+        
         for i, x in enumerate(X): # Loop through each test sample
-            # 1. Calculate distances
+            if n_samples >= 4 and (i+1) % (n_samples // 4) == 0:
+                print(f"      -> KNN: Processing sample {i+1}/{n_samples}...")
+
             distances = [self._euclidean_distance(x, x_train) for x_train in self.X_train]
             
-            # 2. Get the k-nearest labels
             k_nearest_indices = np.argsort(distances)[:self.k]
             k_nearest_labels = [self.y_train[j] for j in k_nearest_indices]
             
-            # 3. Count votes for each class
             class_counts = Counter(k_nearest_labels)
             
-            # 4. Populate the probability row
             for c in range(self.n_classes):
                 all_probas[i, c] = class_counts.get(c, 0) / self.k
         
+        print(f"    -> KNN: Probability calculation complete.")
         return all_probas
 
-    # --- UPDATED PREDICT METHOD ---
     def predict(self, X):
         """
         Predicts the final class label (the one with highest probability).
         """
-        # Get the (n_samples, 10) probability matrix
         probas = self.predict_proba(X)
-        
-        # Return the index (which is the class) with the highest probability
         return np.argmax(probas, axis=1)
 
 class DecisionTree:
     """
     Decision Tree Classifier for multiclass classification.
     """
-    # Helper class for storing node information
     class _TreeNode:
         def __init__(self, feature=None, threshold=None, left=None, right=None, *, value=None):
             self.feature = feature
             self.threshold = threshold
             self.left = left
             self.right = right
-            self.value = value # This is the class label if it's a leaf
+            self.value = value 
         
         def is_leaf_node(self):
             return self.value is not None
@@ -314,12 +338,10 @@ class DecisionTree:
     def __init__(self, max_depth=10, min_samples_split=2, n_features=None):
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
-        self.n_features = n_features # For Random Forest feature subsetting
+        self.n_features = n_features 
         self.root = None
 
     def fit(self, X, y):
-        # If n_features is set (by Random Forest), use a subset.
-        # Otherwise, use all features.
         self.n_features = X.shape[1] if self.n_features is None else min(X.shape[1], self.n_features)
         self.root = self._build_tree(X, y)
 
@@ -327,34 +349,27 @@ class DecisionTree:
         n_samples, n_feats = X.shape
         n_labels = len(np.unique(y))
         
-        # Stopping criteria
         if (depth >= self.max_depth or
             n_labels == 1 or
             n_samples < self.min_samples_split):
             leaf_value = self._most_common_label(y)
             return self._TreeNode(value=leaf_value)
             
-        # Select a random subset of features
         feat_idxs = np.random.choice(n_feats, self.n_features, replace=False)
         
-        # Find the best split
         best_feat, best_thresh = self._best_split(X, y, feat_idxs)
         
-        # If no split improves information gain, create a leaf
         if best_feat is None:
             leaf_value = self._most_common_label(y)
             return self._TreeNode(value=leaf_value)
 
-        # Split the data
         left_idxs = X[:, best_feat] <= best_thresh
         right_idxs = X[:, best_feat] > best_thresh
         
-        # Ensure the split actually created two children
         if not np.any(left_idxs) or not np.any(right_idxs):
             leaf_value = self._most_common_label(y)
             return self._TreeNode(value=leaf_value)
 
-        # Recursively build subtrees
         left_child = self._build_tree(X[left_idxs, :], y[left_idxs], depth + 1)
         right_child = self._build_tree(X[right_idxs, :], y[right_idxs], depth + 1)
         
@@ -370,19 +385,16 @@ class DecisionTree:
         for feat_idx in feat_idxs:
             thresholds = np.unique(X[:, feat_idx])
             for thresh in thresholds:
-                # Split
                 left_idxs = X[:, feat_idx] <= thresh
                 y_left, y_right = y[left_idxs], y[~left_idxs]
                 
                 if len(y_left) == 0 or len(y_right) == 0:
                     continue
                     
-                # Calculate weighted average gini
                 n_l, n_r = len(y_left), len(y_right)
                 gini_left, gini_right = self._gini_impurity(y_left), self._gini_impurity(y_right)
                 child_gini = (n_l / n_samples) * gini_left + (n_r / n_samples) * gini_right
                 
-                # Information Gain
                 gain = parent_gini - child_gini
                 
                 if gain > best_gain:
@@ -395,11 +407,8 @@ class DecisionTree:
     def _gini_impurity(self, y):
         if len(y) == 0:
             return 0
-        # Get counts of each class
         counts = np.bincount(y)
-        # Calculate probabilities
         probabilities = counts[counts > 0] / len(y)
-        # Gini = 1 - sum(p_i^2)
         return 1.0 - np.sum(probabilities**2)
 
     def _most_common_label(self, y):
@@ -441,15 +450,19 @@ class RandomForest:
         self.trees = []
         n_feats = X.shape[1]
         
-        # 1. Resolve n_features string/None to an integer value
         if self.n_features is None or self.n_features == 'sqrt':
             n_feature_sampling = int(np.sqrt(n_feats))
         elif isinstance(self.n_features, int):
             n_feature_sampling = min(n_feats, self.n_features)
         else:
             raise ValueError(f"n_features must be an integer, 'sqrt', or None, got {self.n_features}.")
+        
+        print(f"    -> RF: Building {self.n_trees} trees...")
+        
+        for i in range(self.n_trees):
+            if self.n_trees >= 4 and (i+1) % (self.n_trees // 4) == 0:
+                print(f"      -> RF: Building tree {i+1}/{self.n_trees}...")
             
-        for _ in range(self.n_trees):
             tree = DecisionTree(
                 max_depth=self.max_depth,
                 min_samples_split=self.min_samples_split,
@@ -459,6 +472,7 @@ class RandomForest:
             X_sample, y_sample = self._bootstrap_sample(X, y)
             tree.fit(X_sample, y_sample)
             self.trees.append(tree)
+        print(f"    -> RF: Building complete.")
 
     def predict(self, X):
         tree_preds = np.array([tree.predict(X) for tree in self.trees]).T
@@ -471,14 +485,17 @@ class RandomForest:
         n_classes = 10 
         all_probas = np.zeros((n_samples, n_classes))
         
+        print(f"    -> RF: Calculating probabilities for {n_samples} samples...")
+        
         tree_preds = np.array([tree.predict(X) for tree in self.trees]).T
         
         for i in range(n_samples):
             votes = tree_preds[i]
             class_counts = Counter(votes)
             for c in range(n_classes):
-                 all_probas[i, c] = class_counts.get(c, 0) / self.n_trees
+                all_probas[i, c] = class_counts.get(c, 0) / self.n_trees
                 
+        print(f"    -> RF: Probability calculation complete.")
         return all_probas
 
 # 5. XGBOOST MODELS
@@ -603,8 +620,11 @@ class XGBoostClassifier:
         
         self.initial_prediction = _get_initial_prediction_xgb(y)
         raw_predictions = np.full(n_samples, self.initial_prediction, dtype=float)
+        
         for i in range(self.n_estimators):
-            
+            if self.n_estimators >= 4 and (i+1) % (self.n_estimators // 4) == 0:
+                pass # print(f"      -> XGB: Building tree {i+1}/{self.n_estimators}...")
+
             g, h = _get_derivatives_xgb(y, raw_predictions)
             y_gh = np.c_[g, h]
             
@@ -639,6 +659,7 @@ class XGBoostClassifier:
 
     def predict(self, X):
         return (self.predict_proba(X) >= 0.5).astype(int)
+
 class OneVsRestXGBoost:
     def __init__(self, base_xgb_params):
         self.base_xgb_params = base_xgb_params
@@ -650,13 +671,15 @@ class OneVsRestXGBoost:
         start_time = time.time()
         self.classes_ = np.unique(y)
 
+        print(f"    -> OvR-XGB: Training {len(self.classes_)} binary XGBoost models...")
         
         for i, class_label in enumerate(self.classes_):
+            print(f"      -> OvR-XGB: Training model for class {class_label} ({i+1}/{len(self.classes_)})...")
             
             y_binary = (y == class_label).astype(int)
             model = XGBoostClassifier(**self.base_xgb_params)
             old_stdout = sys.stdout
-            sys.stdout = open(os.devnull, 'w')
+            sys.stdout = open(os.devnull, 'w') # Silences the inner XGBoost prints
             try:
                 model.fit(X, y_binary)
             finally:
@@ -664,19 +687,24 @@ class OneVsRestXGBoost:
                 sys.stdout = old_stdout
             
             self.models[class_label] = model
+            print(f"        -> Class {class_label} model trained in {model.training_time:.2f}s")
 
         self.training_time = time.time() - start_time
+        print(f"    -> OvR-XGB: Training complete. (Total Time: {self.training_time:.2f}s)")
 
     def predict_proba(self, X):
         n_samples = X.shape[0]
         n_classes = len(self.classes_)
         all_probas = np.zeros((n_samples, n_classes))
+
+        print(f"    -> OvR-XGB: Generating probabilities for {n_samples} samples...")
         
         for i, class_label in enumerate(self.classes_):
             model = self.models[class_label]
             probas = model.predict_proba(X)
             all_probas[:, i] = probas
             
+        print(f"    -> OvR-XGB: Probability calculation complete.")
         return all_probas
 
     def predict(self, X):
